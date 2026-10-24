@@ -11,7 +11,10 @@ const app = express();
 app.use(express.json());
 app.use(express.static(__dirname));
 
+// ================================
 // PRODUTOS DE TESTE
+// ================================
+
 const produtos = {
   vip_teste: {
     nome: "VIP Teste",
@@ -19,7 +22,10 @@ const produtos = {
   }
 };
 
-// VERIFICAR SERVIDOR
+// ================================
+// STATUS DA LOJA
+// ================================
+
 app.get("/api/health", (req, res) => {
   res.json({
     loja: "NOVAERA CITY STORE",
@@ -28,10 +34,13 @@ app.get("/api/health", (req, res) => {
   });
 });
 
+// ================================
 // GERAR PIX
+// ================================
+
 app.post("/api/pix/criar", async (req, res) => {
   try {
-    const { produtoId, email } = req.body;
+    const { produtoId, email } = req.body || {};
 
     const produto = produtos[produtoId];
 
@@ -50,7 +59,9 @@ app.post("/api/pix/criar", async (req, res) => {
       });
     }
 
-    if (!process.env.MP_ACCESS_TOKEN) {
+    const token = process.env.MP_ACCESS_TOKEN;
+
+    if (!token) {
       return res.status(503).json({
         erro: "Mercado Pago não configurado"
       });
@@ -63,8 +74,7 @@ app.post("/api/pix/criar", async (req, res) => {
       {
         method: "POST",
         headers: {
-          Authorization:
-            `Bearer ${process.env.MP_ACCESS_TOKEN}`,
+          Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
           "X-Idempotency-Key": referencia
         },
@@ -77,15 +87,18 @@ app.post("/api/pix/criar", async (req, res) => {
             email
           },
           transactions: {
-            payments: [{
-              amount: produto.preco,
-              payment_method: {
-                id: "pix",
-                type: "bank_transfer"
+            payments: [
+              {
+                amount: produto.preco,
+                payment_method: {
+                  id: "pix",
+                  type: "bank_transfer"
+                }
               }
-            }]
+            ]
           }
-        })
+        }),
+        signal: AbortSignal.timeout(15000)
       }
     );
 
@@ -93,13 +106,13 @@ app.post("/api/pix/criar", async (req, res) => {
 
     if (!resposta.ok) {
       console.error(
-        "Falha Mercado Pago:",
+        "Erro Mercado Pago:",
         resposta.status,
         dados.error || dados.message
       );
 
       return res.status(502).json({
-        erro: "Não foi possível criar o PIX"
+        erro: "Não foi possível gerar o PIX"
       });
     }
 
@@ -119,7 +132,7 @@ app.post("/api/pix/criar", async (req, res) => {
 
   } catch (erro) {
     console.error(
-      "Erro ao criar PIX:",
+      "Erro ao gerar PIX:",
       erro.message
     );
 
@@ -129,96 +142,168 @@ app.post("/api/pix/criar", async (req, res) => {
   }
 });
 
+// ================================
+// VALIDAR ASSINATURA DO WEBHOOK
+// ================================
+
+function validarWebhook(req) {
+  const secret = process.env.MP_WEBHOOK_SECRET;
+
+  if (!secret) {
+    return {
+      valido: false,
+      motivo: "Segredo não configurado"
+    };
+  }
+
+  const assinatura =
+    req.get("x-signature") || "";
+
+  const requestId =
+    req.get("x-request-id") || "";
+
+  const partes = {};
+
+  for (const parte of assinatura.split(",")) {
+    const pos = parte.indexOf("=");
+
+    if (pos > 0) {
+      const chave = parte
+        .slice(0, pos)
+        .trim();
+
+      const valor = parte
+        .slice(pos + 1)
+        .trim();
+
+      partes[chave] = valor;
+    }
+  }
+
+  const ts = partes.ts;
+  const v1 = partes.v1;
+
+  // O ID usado no manifesto deve vir
+  // do parâmetro data.id da URL.
+  const id = req.query["data.id"];
+
+  if (typeof id !== "string" || !id) {
+    return {
+      valido: false,
+      motivo: "data.id ausente na URL"
+    };
+  }
+
+  if (!requestId) {
+    return {
+      valido: false,
+      motivo: "x-request-id ausente"
+    };
+  }
+
+  if (
+    !/^\d+$/.test(ts || "") ||
+    !/^[a-fA-F0-9]{64}$/.test(v1 || "")
+  ) {
+    return {
+      valido: false,
+      motivo: "Cabeçalho de assinatura inválido"
+    };
+  }
+
+  const timestamp = Number(ts);
+
+  const timestampMs =
+    timestamp < 1e11
+      ? timestamp * 1000
+      : timestamp;
+
+  if (
+    !Number.isFinite(timestampMs) ||
+    Math.abs(Date.now() - timestampMs) >
+      10 * 60 * 1000
+  ) {
+    return {
+      valido: false,
+      motivo: "Timestamp fora da janela"
+    };
+  }
+
+  // IDs alfanuméricos são usados
+  // em Orders do Mercado Pago.
+  const manifesto =
+    `id:${id.toLowerCase()};` +
+    `request-id:${requestId};` +
+    `ts:${ts};`;
+
+  const esperado = createHmac(
+    "sha256",
+    secret
+  )
+    .update(manifesto)
+    .digest();
+
+  const recebido = Buffer.from(v1, "hex");
+
+  if (
+    recebido.length !== esperado.length ||
+    !timingSafeEqual(recebido, esperado)
+  ) {
+    return {
+      valido: false,
+      motivo: "HMAC não corresponde"
+    };
+  }
+
+  return {
+    valido: true,
+    id
+  };
+}
+
+// ================================
 // WEBHOOK MERCADO PAGO
+// ================================
+
 app.post(
   "/api/webhooks/mercadopago",
   async (req, res) => {
     try {
-      const secret = process.env.MP_WEBHOOK_SECRET;
-      const token = process.env.MP_ACCESS_TOKEN;
+      const verificacao = validarWebhook(req);
 
-      if (!secret || !token) {
-        console.error("Webhook não configurado");
+      if (!verificacao.valido) {
+        console.warn(
+          "Webhook rejeitado:",
+          verificacao.motivo
+        );
+
+        return res.sendStatus(401);
+      }
+
+      console.log(
+        "Assinatura do webhook válida"
+      );
+
+      const tipo =
+        req.body?.type || req.body?.topic;
+
+      if (tipo !== "order") {
+        console.log(
+          "Evento ignorado:",
+          tipo || "desconhecido"
+        );
+
+        return res.sendStatus(200);
+      }
+
+      const token =
+        process.env.MP_ACCESS_TOKEN;
+
+      if (!token) {
         return res.sendStatus(503);
       }
 
-      const assinatura =
-        req.get("x-signature") || "";
-
-      const requestId =
-        req.get("x-request-id") || "";
-
-      const partes = {};
-
-      for (const parte of assinatura.split(",")) {
-        const pos = parte.indexOf("=");
-
-        if (pos > 0) {
-          const chave =
-            parte.slice(0, pos).trim();
-
-          const valor =
-            parte.slice(pos + 1).trim();
-
-          partes[chave] = valor;
-        }
-      }
-
-      const ts = partes.ts;
-      const v1 = partes.v1;
-
-      const id = req.query["data.id"];
-
-      if (
-        typeof id !== "string" ||
-        !/^[a-zA-Z0-9_-]+$/.test(id) ||
-        !/^\d+$/.test(ts || "") ||
-        !/^[a-fA-F0-9]{64}$/.test(v1 || "")
-      ) {
-        return res.sendStatus(401);
-      }
-
-      const timestamp = Number(ts);
-
-      const timestampMs =
-        timestamp < 1e11
-          ? timestamp * 1000
-          : timestamp;
-
-      if (
-        !Number.isFinite(timestampMs) ||
-        Math.abs(Date.now() - timestampMs) >
-          10 * 60 * 1000
-      ) {
-        return res.sendStatus(401);
-      }
-
-      const manifesto =
-        `id:${id.toLowerCase()};` +
-        `request-id:${requestId};` +
-        `ts:${ts};`;
-
-      const esperado = createHmac(
-        "sha256",
-        secret
-      )
-        .update(manifesto)
-        .digest();
-
-      const recebido =
-        Buffer.from(v1, "hex");
-
-      if (
-        recebido.length !== esperado.length ||
-        !timingSafeEqual(recebido, esperado)
-      ) {
-        console.warn("Assinatura inválida");
-        return res.sendStatus(401);
-      }
-
-      if (req.body?.type !== "order") {
-        return res.sendStatus(200);
-      }
+      const id = verificacao.id;
 
       const resposta = await fetch(
         "https://api.mercadopago.com/v1/orders/" +
@@ -233,7 +318,7 @@ app.post(
 
       if (!resposta.ok) {
         console.error(
-          "Erro ao consultar order:",
+          "Erro ao consultar pedido:",
           resposta.status
         );
 
@@ -243,6 +328,10 @@ app.post(
       const pedido = await resposta.json();
 
       if (String(pedido.id) !== id) {
+        console.error(
+          "ID do pedido não corresponde"
+        );
+
         return res.sendStatus(400);
       }
 
@@ -250,15 +339,17 @@ app.post(
         pedido.status === "processed" &&
         pedido.status_detail === "accredited";
 
-      console.log("Webhook validado:", {
+      console.log("Pedido consultado:", {
         orderId: pedido.id,
         status: pedido.status,
         statusDetail: pedido.status_detail,
         aprovado
       });
 
-      // Entrega automática ainda não ativada.
-      // Falta banco de dados e integração MTA.
+      // IMPORTANTE:
+      // Não entregar VIP automaticamente.
+      // Ainda precisamos de banco de dados,
+      // validação do valor e integração MTA.
 
       return res.sendStatus(200);
 
@@ -273,9 +364,14 @@ app.post(
   }
 );
 
+// ================================
 // INICIAR SERVIDOR
+// ================================
+
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log("NOVAERA CITY STORE ONLINE!");
+  console.log(
+    "NOVAERA CITY STORE ONLINE!"
+  );
 });
