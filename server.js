@@ -41,7 +41,6 @@ app.get("/api/health", (req, res) => {
 app.post("/api/pix/criar", async (req, res) => {
   try {
     const { produtoId, email } = req.body || {};
-
     const produto = produtos[produtoId];
 
     if (!produto) {
@@ -83,9 +82,7 @@ app.post("/api/pix/criar", async (req, res) => {
           processing_mode: "automatic",
           external_reference: referencia,
           total_amount: produto.preco,
-          payer: {
-            email
-          },
+          payer: { email },
           transactions: {
             payments: [
               {
@@ -122,8 +119,7 @@ app.post("/api/pix/criar", async (req, res) => {
     return res.json({
       orderId: dados.id,
       status: dados.status,
-      qrCode:
-        pagamento?.payment_method?.qr_code,
+      qrCode: pagamento?.payment_method?.qr_code,
       qrCodeBase64:
         pagamento?.payment_method?.qr_code_base64,
       ticketUrl:
@@ -131,10 +127,7 @@ app.post("/api/pix/criar", async (req, res) => {
     });
 
   } catch (erro) {
-    console.error(
-      "Erro ao gerar PIX:",
-      erro.message
-    );
+    console.error("Erro ao gerar PIX:", erro.message);
 
     return res.status(500).json({
       erro: "Erro interno"
@@ -156,11 +149,8 @@ function validarWebhook(req) {
     };
   }
 
-  const assinatura =
-    req.get("x-signature") || "";
-
-  const requestId =
-    req.get("x-request-id") || "";
+  const assinatura = req.get("x-signature") || "";
+  const requestId = req.get("x-request-id") || "";
 
   const partes = {};
 
@@ -168,13 +158,8 @@ function validarWebhook(req) {
     const pos = parte.indexOf("=");
 
     if (pos > 0) {
-      const chave = parte
-        .slice(0, pos)
-        .trim();
-
-      const valor = parte
-        .slice(pos + 1)
-        .trim();
+      const chave = parte.slice(0, pos).trim();
+      const valor = parte.slice(pos + 1).trim();
 
       partes[chave] = valor;
     }
@@ -182,9 +167,6 @@ function validarWebhook(req) {
 
   const ts = partes.ts;
   const v1 = partes.v1;
-
-  // O ID usado no manifesto deve vir
-  // do parâmetro data.id da URL.
   const id = req.query["data.id"];
 
   if (typeof id !== "string" || !id) {
@@ -229,17 +211,12 @@ function validarWebhook(req) {
     };
   }
 
-  // IDs alfanuméricos são usados
-  // em Orders do Mercado Pago.
   const manifesto =
     `id:${id.toLowerCase()};` +
     `request-id:${requestId};` +
     `ts:${ts};`;
 
-  const esperado = createHmac(
-    "sha256",
-    secret
-  )
+  const esperado = createHmac("sha256", secret)
     .update(manifesto)
     .digest();
 
@@ -272,17 +249,33 @@ app.post(
       const verificacao = validarWebhook(req);
 
       if (!verificacao.valido) {
+
         console.warn(
           "Webhook rejeitado:",
           verificacao.motivo
         );
 
+        // DIAGNOSTICO ADICIONADO
+        console.log("Diagnóstico webhook:", {
+          idUrlPresente: Boolean(req.query["data.id"]),
+          idBodyPresente: Boolean(req.body?.data?.id),
+          requestIdPresente: Boolean(
+            req.get("x-request-id")
+          ),
+          assinaturaPresente: Boolean(
+            req.get("x-signature")
+          ),
+          segredoConfigurado: Boolean(
+            process.env.MP_WEBHOOK_SECRET
+          ),
+          tipoEvento:
+            req.body?.type || "desconhecido"
+        });
+
         return res.sendStatus(401);
       }
 
-      console.log(
-        "Assinatura do webhook válida"
-      );
+      console.log("Assinatura do webhook válida");
 
       const tipo =
         req.body?.type || req.body?.topic;
@@ -296,8 +289,7 @@ app.post(
         return res.sendStatus(200);
       }
 
-      const token =
-        process.env.MP_ACCESS_TOKEN;
+      const token = process.env.MP_ACCESS_TOKEN;
 
       if (!token) {
         return res.sendStatus(503);
@@ -346,10 +338,8 @@ app.post(
         aprovado
       });
 
-      // IMPORTANTE:
-      // Não entregar VIP automaticamente.
-      // Ainda precisamos de banco de dados,
-      // validação do valor e integração MTA.
+      // Entrega automática ainda desativada.
+      // Falta banco de dados e integração MTA.
 
       return res.sendStatus(200);
 
@@ -371,7 +361,5 @@ app.post(
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(
-    "NOVAERA CITY STORE ONLINE!"
-  );
+  console.log("NOVAERA CITY STORE ONLINE!");
 });
