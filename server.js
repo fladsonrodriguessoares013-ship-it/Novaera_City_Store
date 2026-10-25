@@ -8,6 +8,34 @@ const {
 
 const app = express();
 
+// ================================
+// BANCO DE DADOS NOVAERA CITY
+// ================================
+
+const { Pool } = require("pg");
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  connectionTimeoutMillis: 10000
+});
+
+async function conectarBanco() {
+  try {
+    await pool.query("SELECT 1");
+
+    console.log(
+      "[NOVAERA] PostgreSQL conectado!"
+    );
+  } catch (erro) {
+    console.error(
+      "[NOVAERA] Erro no banco:",
+      erro.message
+    );
+  }
+}
+
+conectarBanco();
+
 app.use(express.json());
 app.use(express.static(__dirname));
 
