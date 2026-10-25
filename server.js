@@ -72,6 +72,13 @@ async function prepararBanco() {
     ON novaera_pedidos (estado, entrega_estado)
   `);
 
+  await pool.query(`CREATE TABLE IF NOT EXISTS novaera_entregas (
+    referencia UUID PRIMARY KEY REFERENCES novaera_pedidos(referencia),
+    conta_mta TEXT NOT NULL,
+    estado TEXT NOT NULL CHECK (estado IN ('reservado','confirmado')),
+    criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`);
   bancoPronto = true;
 
   console.log(
@@ -182,7 +189,7 @@ app.get("/api/health", (req, res) => {
       ? "online"
       : "banco_indisponivel",
     pix: "integracao_em_teste",
-    entregaVip: "desativada"
+    entregaVip: process.env.NOVAERA_DELIVERY_ENABLED === "true" ? "habilitada" : "desativada"
   });
 });
 
@@ -497,8 +504,11 @@ app.post(
         );
       }
 
-      // ENTREGA AUTOMATICA AINDA DESATIVADA.
-      // Sera conectada ao MTA na proxima etapa.
+      // Apenas pagamentos autenticados pelo Mercado Pago entram na fila.
+      if (aprovado) {
+        await pool.query(`UPDATE novaera_pedidos SET entrega_estado = 'pendente'
+          WHERE referencia = $1 AND estado = 'aprovado' AND entrega_estado = 'bloqueada'`, [referencia]);
+      }
 
       return res.sendStatus(200);
 
@@ -512,6 +522,67 @@ app.post(
     }
   }
 );
+
+// ====================================
+// PONTE PRIVADA MTA - desativada ate testes
+// ====================================
+const entregaLigada = () => process.env.NOVAERA_DELIVERY_ENABLED === "true";
+function autorizarMta(req, res, next) {
+  const segredo = process.env.NOVAERA_BRIDGE_SECRET;
+  const recebido = req.get("x-novaera-bridge-secret") || "";
+  if (!entregaLigada()) return res.status(503).json({ erro: "Entrega desativada" });
+  if (!segredo || segredo.length < 32 || recebido.length !== segredo.length ||
+      !timingSafeEqual(Buffer.from(recebido), Buffer.from(segredo))) {
+    return res.sendStatus(401);
+  }
+  next();
+}
+const uuidValido = s => typeof s === "string" &&
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
+
+// Somente a conta autenticada no MTA recebe pedidos com esse nome exato.
+app.get("/api/mta/pedidos", autorizarMta, async (req, res) => {
+  const conta = req.query.conta;
+  if (typeof conta !== "string" || conta.length < 3 || conta.length > 40) {
+    return res.sendStatus(400);
+  }
+  try {
+    const result = await pool.query(`SELECT p.referencia, p.produto_id, p.conta_mta
+      FROM novaera_pedidos p LEFT JOIN novaera_entregas e ON e.referencia = p.referencia
+      WHERE p.estado = 'aprovado' AND p.entrega_estado = 'pendente'
+        AND p.conta_mta = $1 AND e.referencia IS NULL
+      ORDER BY p.aprovado_em LIMIT 10`, [conta]);
+    res.set("Cache-Control", "no-store");
+    return res.json({ pedidos: result.rows });
+  } catch (e) { console.error("[MTA] pedidos:", e.message); return res.sendStatus(503); }
+});
+
+// Reserva permanente ANTES de aplicar o VIP. Falhas incertas exigem revisao manual.
+app.post("/api/mta/reservar", autorizarMta, async (req, res) => {
+  const { referencia, conta } = req.body || {};
+  if (!uuidValido(referencia) || typeof conta !== "string" || conta.length > 40) return res.sendStatus(400);
+  try {
+    const r = await pool.query(`INSERT INTO novaera_entregas (referencia, conta_mta, estado)
+      SELECT referencia, conta_mta, 'reservado' FROM novaera_pedidos
+      WHERE referencia = $1 AND conta_mta = $2 AND estado = 'aprovado' AND entrega_estado = 'pendente'
+      ON CONFLICT (referencia) DO NOTHING RETURNING referencia`, [referencia, conta]);
+    return res.json({ reservado: r.rowCount === 1 });
+  } catch(e) { console.error("[MTA] reservar:", e.message); return res.sendStatus(503); }
+});
+app.post("/api/mta/confirmar", autorizarMta, async (req, res) => {
+  const { referencia, conta } = req.body || {};
+  if (!uuidValido(referencia) || typeof conta !== "string" || conta.length > 40) return res.sendStatus(400);
+  try {
+    const r = await pool.query(`WITH confirmacao AS (
+      UPDATE novaera_entregas SET estado = 'confirmado', atualizado_em = NOW()
+      WHERE referencia = $1 AND conta_mta = $2 AND estado IN ('reservado','confirmado')
+      RETURNING referencia
+    ) UPDATE novaera_pedidos SET entrega_estado = 'entregue', entregue_em = COALESCE(entregue_em,NOW())
+      WHERE referencia IN (SELECT referencia FROM confirmacao) AND estado = 'aprovado'
+      RETURNING referencia`, [referencia, conta]);
+    return res.json({ confirmado: r.rowCount === 1 });
+  } catch(e) { console.error("[MTA] confirmar:", e.message); return res.sendStatus(503); }
+});
 
 // ====================================
 // INICIAR SERVIDOR
