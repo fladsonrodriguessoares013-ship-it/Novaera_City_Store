@@ -556,7 +556,12 @@ function autorizarMta(req, res, next) {
 app.post("/api/mta/vincular/gerar", autorizarMta, async (req, res) => {
   if (!bancoPronto) return res.sendStatus(503);
   const conta = req.body?.conta;
-  if (typeof conta !== "string" || !/^[\p{L}\p{N}_. -]{3,40}$/u.test(conta)) {
+if (
+    typeof conta !== "string" ||
+    conta.length < 1 ||
+    conta.length > 64 ||
+    /[\x00-\x1F\x7F]/.test(conta)
+) {
     return res.status(400).json({ erro: "Conta invalida" });
   }
   try {
