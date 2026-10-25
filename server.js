@@ -599,6 +599,24 @@ app.get("/api/mta/pedidos", autorizarMta, async (req, res) => {
   } catch (e) { console.error("[MTA] pedidos:", e.message); return res.sendStatus(503); }
 });
 
+// SIMULACAO ISOLADA: nunca grava pedido, aprova PIX ou entra na fila de entrega.
+// Disponivel apenas para a ponte autenticada e com entrega desativada.
+app.get("/api/mta/simular-pedido", autorizarMta, (req, res) => {
+  if (entregaLigada()) return res.status(409).json({ erro: "Desative a entrega para simular" });
+  const conta = req.query.conta;
+  if (typeof conta !== "string" || conta.length < 1 || conta.length > 64 || /[\x00-\x1F\x7F]/.test(conta)) {
+    return res.status(400).json({ erro: "Conta invalida" });
+  }
+  res.set("Cache-Control", "no-store");
+  return res.json({
+    simulacao: true,
+    pagamento_real: false,
+    gravado_no_banco: false,
+    vip_entregue: false,
+    pedido: { produto_id: "vip-vip-royal", conta_mta: conta, dias: 30, valor_centavos: 1000 }
+  });
+});
+
 // Reserva permanente ANTES de aplicar o VIP. Falhas incertas exigem revisao manual.
 app.post("/api/mta/reservar", autorizarMta, async (req, res) => {
   if (!entregaLigada()) return res.status(503).json({ erro: "Entrega desativada" });
