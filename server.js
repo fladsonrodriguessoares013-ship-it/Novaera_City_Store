@@ -530,7 +530,6 @@ const entregaLigada = () => process.env.NOVAERA_DELIVERY_ENABLED === "true";
 function autorizarMta(req, res, next) {
   const segredo = process.env.NOVAERA_BRIDGE_SECRET;
   const recebido = req.get("x-novaera-bridge-secret") || "";
-  if (!entregaLigada()) return res.status(503).json({ erro: "Entrega desativada" });
   if (!segredo || segredo.length < 32 || recebido.length !== segredo.length ||
       !timingSafeEqual(Buffer.from(recebido), Buffer.from(segredo))) {
     return res.sendStatus(401);
@@ -559,6 +558,7 @@ app.get("/api/mta/pedidos", autorizarMta, async (req, res) => {
 
 // Reserva permanente ANTES de aplicar o VIP. Falhas incertas exigem revisao manual.
 app.post("/api/mta/reservar", autorizarMta, async (req, res) => {
+  if (!entregaLigada()) return res.status(503).json({ erro: "Entrega desativada" });
   const { referencia, conta } = req.body || {};
   if (!uuidValido(referencia) || typeof conta !== "string" || conta.length > 40) return res.sendStatus(400);
   try {
@@ -570,6 +570,7 @@ app.post("/api/mta/reservar", autorizarMta, async (req, res) => {
   } catch(e) { console.error("[MTA] reservar:", e.message); return res.sendStatus(503); }
 });
 app.post("/api/mta/confirmar", autorizarMta, async (req, res) => {
+  if (!entregaLigada()) return res.status(503).json({ erro: "Entrega desativada" });
   const { referencia, conta } = req.body || {};
   if (!uuidValido(referencia) || typeof conta !== "string" || conta.length > 40) return res.sendStatus(400);
   try {
