@@ -25,7 +25,7 @@ function renderCart(){
 }
 function openCart(){ $("#cart-drawer").classList.add("show"); $("#backdrop").classList.add("show"); }
 function closeCart(){ $("#cart-drawer").classList.remove("show"); $("#backdrop").classList.remove("show"); }
-function renderOrders(){ const orders = safeReadOrders(); const host = $("#orders-list"); if (!orders.length) { host.innerHTML = '<div class="empty-cart">Nenhum pedido de teste salvo neste navegador.</div>'; return; } host.innerHTML = orders.slice().reverse().map(o => `<article class="order-card"><div><strong>${escapeHtml(o.id)}</strong><small>${escapeHtml(o.date)} · Conta: ${escapeHtml(o.contaMta || "Não informada")} · ID: ${escapeHtml(o.jogadorId || "Não informado")} · Nick: ${escapeHtml(o.nick)}</small></div><strong>${money(o.total)}</strong><p>${o.items.map(i => `${escapeHtml(i.name)} × ${i.qty}`).join(" · ")}</p><span class="order-status">${escapeHtml(o.status)}</span></article>`).join(""); }
+function renderOrders(){ const orders = safeReadOrders(); const host = $("#orders-list"); if (!orders.length) { host.innerHTML = '<div class="empty-cart">Nenhum pedido de teste salvo neste navegador.</div>'; return; } host.innerHTML = orders.slice().reverse().map(o => `<article class="order-card"><div><strong>${escapeHtml(o.id)}</strong><small>${escapeHtml(o.date)} · Conta: ${escapeHtml(o.contaMta || "Não informada")} · ID: ${escapeHtml(o.jogadorId || "Não informado")} · Conta MTA: ${escapeHtml(o.contaMta || o.nick || "-")}</small></div><strong>${money(o.total)}</strong><p>${o.items.map(i => `${escapeHtml(i.name)} × ${i.qty}`).join(" · ")}</p><span class="order-status">${escapeHtml(o.status)}</span></article>`).join(""); }
 function escapeHtml(value){ return String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 $("#open-cart").addEventListener("click",openCart); $("#close-cart").addEventListener("click",closeCart); $("#backdrop").addEventListener("click",closeCart);
 $("#filters").querySelectorAll("[data-filter]").forEach(btn => btn.addEventListener("click", () => { currentFilter = btn.dataset.filter; $("#filters").querySelectorAll(".filter").forEach(b => b.classList.toggle("active",b === btn)); renderProducts(); }));
@@ -39,10 +39,9 @@ $("#checkout-form").addEventListener("submit", e => {
   const contaMta = $("#account-name").value.trim();
   const jogadorId = $("#player-id").value.trim();
   const email = $("#buyer-email").value.trim();
-  const nick = $("#player-name").value.trim();
 
-  if (!contaMta || !/^[0-9]{1,10}$/.test(jogadorId) || !email || !nick) {
-    alert("Preencha o nome da conta, o ID, o e-mail e o nick corretamente.");
+  if (!contaMta || !/^[0-9]{1,10}$/.test(jogadorId) || !email) {
+    alert("Preencha o nome da conta, o ID, e o e-mail corretamente.");
     return;
   }
 
@@ -53,9 +52,7 @@ $("#checkout-form").addEventListener("submit", e => {
     date: new Date().toLocaleString("pt-BR"),
     contaMta,
     jogadorId,
-    nick,
     contact: $("#contact").value.trim(),
-    notes: $("#notes").value.trim(),
     items: cart.map(i => ({
       id: i.id, name: i.name, qty: i.qty, price: i.price,
       deliveryType: i.deliveryType || "manual",
@@ -74,7 +71,7 @@ $("#checkout-form").addEventListener("submit", e => {
 
   const result = $("#order-result");
   result.hidden = false;
-  result.textContent = `PEDIDO DE TESTE ${order.id}\nConta MTA: ${contaMta}\nID: ${jogadorId}\nNick: ${nick}\nE-mail informado: ${email}\nTotal: ${money(order.total)}\n\nNenhum PIX foi cobrado. Nenhum pedido foi enviado ao servidor MTA.`;
+  result.textContent = `PEDIDO DE TESTE ${order.id}\nConta MTA: ${contaMta}\nID: ${jogadorId}\nE-mail informado: ${email}\nTotal: ${money(order.total)}\n\nNenhum PIX foi cobrado. Nenhum pedido foi enviado ao servidor MTA.`;
   cart = [];
   renderCart();
   renderOrders();
