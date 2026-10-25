@@ -555,7 +555,11 @@ function autorizarMta(req, res, next) {
 // Vinculacao segura: apenas a ponte autenticada pode emitir codigos.
 app.post("/api/mta/vincular/gerar", autorizarMta, async (req, res) => {
   if (!bancoPronto) return res.sendStatus(503);
-  const conta = req.body?.conta;
+ const dados = Array.isArray(req.body)
+    ? req.body[0]
+    : req.body;
+
+const conta = dados?.conta;
 if (
     typeof conta !== "string" ||
     conta.length < 1 ||
