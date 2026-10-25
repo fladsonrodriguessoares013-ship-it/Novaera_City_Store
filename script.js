@@ -8,6 +8,7 @@ const $ = s => document.querySelector(s);
 const money = value => value == null ? "Preço a definir" : Number(value).toLocaleString("pt-BR", {style:"currency",currency:"BRL"});
 let cart = [];
 let currentFilter = "Todos";
+let pixGerado = false;
 const grid = $("#product-grid");
 const safeReadOrders = () => { try { return JSON.parse(localStorage.getItem("novaera_store_orders") || "[]"); } catch { return []; } };
 function renderProducts(){
@@ -29,9 +30,22 @@ function renderOrders(){ const orders = safeReadOrders(); const host = $("#order
 function escapeHtml(value){ return String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 $("#open-cart").addEventListener("click",openCart); $("#close-cart").addEventListener("click",closeCart); $("#backdrop").addEventListener("click",closeCart);
 $("#filters").querySelectorAll("[data-filter]").forEach(btn => btn.addEventListener("click", () => { currentFilter = btn.dataset.filter; $("#filters").querySelectorAll(".filter").forEach(b => b.classList.toggle("active",b === btn)); renderProducts(); }));
-$("#checkout").addEventListener("click",() => { if (!cart.length) return; closeCart(); $("#order-result").hidden = true; $("#checkout-modal").classList.add("show"); });
-$("#close-modal").addEventListener("click",() => $("#checkout-modal").classList.remove("show"));
-$("#checkout-modal").addEventListener("click",e => { if (e.target.id === "checkout-modal") $("#checkout-modal").classList.remove("show"); });
+function fecharPagamento(){
+  $("#checkout-modal").classList.remove("show");
+  if (pixGerado) {
+    pixGerado = false;
+    $("#checkout-form").hidden = false;
+    $("#checkout-form").reset();
+    $("#order-result").hidden = true;
+    $("#order-result").replaceChildren();
+    $("#checkout-modal .eyebrow").textContent = "FINALIZAR PEDIDO";
+    $("#checkout-modal h2").textContent = "Quase lá!";
+    $("#checkout-modal .modal-intro").textContent = "Informe os dados da sua conta para gerar o PIX.";
+  }
+}
+$("#checkout").addEventListener("click",() => { if (!cart.length) return; closeCart(); fecharPagamento(); $("#order-result").hidden = true; $("#checkout-modal").classList.add("show"); });
+$("#close-modal").addEventListener("click",fecharPagamento);
+$("#checkout-modal").addEventListener("click",e => { if (e.target.id === "checkout-modal") fecharPagamento(); });
 $("#checkout-form").addEventListener("submit", async e => {
   e.preventDefault();
   if (!cart.length) return;
@@ -128,6 +142,18 @@ $("#checkout-form").addEventListener("submit", async e => {
       } catch (err) { status.textContent = err.message; }
     });
     result.append(verificar);
+    const voltar = document.createElement("button");
+    voltar.type = "button";
+    voltar.className = "secondary-button";
+    voltar.textContent = "VOLTAR À LOJA";
+    voltar.style.cssText = "display:block;width:100%;margin-top:12px";
+    voltar.addEventListener("click", fecharPagamento);
+    result.append(voltar);
+    pixGerado = true;
+    $("#checkout-form").hidden = true;
+    $("#checkout-modal .eyebrow").textContent = "PAGAMENTO PIX";
+    $("#checkout-modal h2").textContent = "PIX GERADO";
+    $("#checkout-modal .modal-intro").textContent = "Valor: " + money(order.total) + " • Pague pelo QR Code ou Copia e Cola.";
   } catch (err) {
     result.textContent = "Erro ao gerar PIX: " + err.message;
   } finally {
@@ -136,5 +162,5 @@ $("#checkout-form").addEventListener("submit", async e => {
   }
 });
 $("#clear-orders").addEventListener("click",() => { if (confirm("Apagar o histórico de pedidos salvo somente neste navegador?")) { localStorage.removeItem("novaera_store_orders"); renderOrders(); } });
-document.addEventListener("keydown",e => { if (e.key === "Escape") { closeCart(); $("#checkout-modal").classList.remove("show"); } });
+document.addEventListener("keydown",e => { if (e.key === "Escape") { closeCart(); fecharPagamento(); } });
 $("#year").textContent = new Date().getFullYear(); renderProducts(); renderCart(); renderOrders();
