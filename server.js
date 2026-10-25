@@ -555,11 +555,8 @@ function autorizarMta(req, res, next) {
 // Vinculacao segura: apenas a ponte autenticada pode emitir codigos.
 app.post("/api/mta/vincular/gerar", autorizarMta, async (req, res) => {
   if (!bancoPronto) return res.sendStatus(503);
- const dados = Array.isArray(req.body)
-    ? req.body[0]
-    : req.body;
-
-const conta = dados?.conta;
+  const dados = Array.isArray(req.body) ? req.body[0] : req.body;
+  const conta = dados?.conta;
 if (
     typeof conta !== "string" ||
     conta.length < 1 ||
@@ -588,7 +585,7 @@ const uuidValido = s => typeof s === "string" &&
 // Somente a conta autenticada no MTA recebe pedidos com esse nome exato.
 app.get("/api/mta/pedidos", autorizarMta, async (req, res) => {
   const conta = req.query.conta;
-  if (typeof conta !== "string" || conta.length < 3 || conta.length > 40) {
+  if (typeof conta !== "string" || conta.length < 1 || conta.length > 64) {
     return res.sendStatus(400);
   }
   try {
@@ -605,8 +602,8 @@ app.get("/api/mta/pedidos", autorizarMta, async (req, res) => {
 // Reserva permanente ANTES de aplicar o VIP. Falhas incertas exigem revisao manual.
 app.post("/api/mta/reservar", autorizarMta, async (req, res) => {
   if (!entregaLigada()) return res.status(503).json({ erro: "Entrega desativada" });
-  const { referencia, conta } = req.body || {};
-  if (!uuidValido(referencia) || typeof conta !== "string" || conta.length > 40) return res.sendStatus(400);
+  const { referencia, conta } = (Array.isArray(req.body) ? req.body[0] : req.body) || {};
+  if (!uuidValido(referencia) || typeof conta !== "string" || conta.length > 64) return res.sendStatus(400);
   try {
     const r = await pool.query(`INSERT INTO novaera_entregas (referencia, conta_mta, estado)
       SELECT referencia, conta_mta, 'reservado' FROM novaera_pedidos
@@ -617,8 +614,8 @@ app.post("/api/mta/reservar", autorizarMta, async (req, res) => {
 });
 app.post("/api/mta/confirmar", autorizarMta, async (req, res) => {
   if (!entregaLigada()) return res.status(503).json({ erro: "Entrega desativada" });
-  const { referencia, conta } = req.body || {};
-  if (!uuidValido(referencia) || typeof conta !== "string" || conta.length > 40) return res.sendStatus(400);
+  const { referencia, conta } = (Array.isArray(req.body) ? req.body[0] : req.body) || {};
+  if (!uuidValido(referencia) || typeof conta !== "string" || conta.length > 64) return res.sendStatus(400);
   try {
     const r = await pool.query(`WITH confirmacao AS (
       UPDATE novaera_entregas SET estado = 'confirmado', atualizado_em = NOW()
