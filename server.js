@@ -3,7 +3,7 @@
 
 const express = require("express");
 const { Pool } = require("pg");
-const { randomUUID, createHmac, timingSafeEqual } = require("crypto");
+const { randomUUID, createHmac, timingSafeEqual, randomBytes, createHash } = require("crypto");
 
 const app = express();
 
@@ -79,6 +79,15 @@ async function prepararBanco() {
     criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS novaera_codigos_conta (
+    codigo_hash TEXT PRIMARY KEY,
+    conta_mta TEXT NOT NULL,
+    expira_em TIMESTAMPTZ NOT NULL,
+    usado_em TIMESTAMPTZ,
+    criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_novaera_codigos_conta_conta
+    ON novaera_codigos_conta (conta_mta, criado_em DESC)`);
   bancoPronto = true;
 
   console.log(
@@ -204,7 +213,7 @@ app.post("/api/pix/criar", async (req, res) => {
     });
   }
 
-  const { produtoId, email, jogadorId, contaMta } = req.body || {};
+  const { produtoId, email, jogadorId, codigoVinculacao } = req.body || {};
   const produto = produtos[produtoId];
 
   if (!produto) {
@@ -234,8 +243,8 @@ app.post("/api/pix/criar", async (req, res) => {
     });
   }
 
-  if (typeof contaMta !== "string" || !/^[\p{L}\p{N}_. -]{3,40}$/u.test(contaMta.trim())) {
-    return res.status(400).json({ erro: "Nome da conta MTA invalido" });
+  if (typeof codigoVinculacao !== "string" || !/^[A-F0-9]{10}$/.test(codigoVinculacao.trim().toUpperCase())) {
+    return res.status(400).json({ erro: "Codigo de vinculacao invalido. Digite /vincularloja no MTA." });
   }
 
   const token = process.env.MP_ACCESS_TOKEN;
@@ -250,26 +259,33 @@ app.post("/api/pix/criar", async (req, res) => {
   const centavos = valorEmCentavos(produto.preco);
 
   try {
-    await pool.query(`
-      INSERT INTO novaera_pedidos (
-        referencia,
-        produto_id,
-        produto_nome,
-        valor_centavos,
-        email,
-        jogador_id,
-        conta_mta
-      )
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
-    `, [
-      referencia,
-      produtoId,
-      produto.nome,
-      centavos,
-      email,
-      id,
-      contaMta.trim()
-    ]);
+    // Consumo atomico: o comprador nao pode escolher outra conta nem reutilizar o codigo.
+    const codigoHash = createHash("sha256").update(codigoVinculacao.trim().toUpperCase()).digest("hex");
+    const cliente = await pool.connect();
+    let contaMta;
+    try {
+      await cliente.query("BEGIN");
+      const vinculo = await cliente.query(`UPDATE novaera_codigos_conta
+        SET usado_em = NOW()
+        WHERE codigo_hash = $1 AND usado_em IS NULL AND expira_em > NOW()
+        RETURNING conta_mta`, [codigoHash]);
+      if (vinculo.rowCount !== 1) {
+        await cliente.query("ROLLBACK");
+        return res.status(400).json({ erro: "Codigo expirado ou ja utilizado. Gere outro com /vincularloja." });
+      }
+      contaMta = vinculo.rows[0].conta_mta;
+      await cliente.query(`INSERT INTO novaera_pedidos (
+        referencia, produto_id, produto_nome, valor_centavos, email, jogador_id, conta_mta
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7)`, [
+        referencia, produtoId, produto.nome, centavos, email, id, contaMta
+      ]);
+      await cliente.query("COMMIT");
+    } catch (e) {
+      await cliente.query("ROLLBACK");
+      throw e;
+    } finally {
+      cliente.release();
+    }
 
     const resposta = await fetch(
       "https://api.mercadopago.com/v1/orders",
@@ -536,6 +552,27 @@ function autorizarMta(req, res, next) {
   }
   next();
 }
+// Vinculacao segura: apenas a ponte autenticada pode emitir codigos.
+app.post("/api/mta/vincular/gerar", autorizarMta, async (req, res) => {
+  if (!bancoPronto) return res.sendStatus(503);
+  const conta = req.body?.conta;
+  if (typeof conta !== "string" || !/^[\p{L}\p{N}_. -]{3,40}$/u.test(conta)) {
+    return res.status(400).json({ erro: "Conta invalida" });
+  }
+  try {
+    const codigo = randomBytes(5).toString("hex").toUpperCase();
+    const hash = createHash("sha256").update(codigo).digest("hex");
+    await pool.query(`DELETE FROM novaera_codigos_conta WHERE conta_mta = $1 AND usado_em IS NULL`, [conta]);
+    await pool.query(`INSERT INTO novaera_codigos_conta (codigo_hash, conta_mta, expira_em)
+      VALUES ($1, $2, NOW() + INTERVAL '10 minutes')`, [hash, conta]);
+    res.set("Cache-Control", "no-store");
+    return res.json({ codigo, validadeMinutos: 10 });
+  } catch (e) {
+    console.error("[MTA] vincular:", e.message);
+    return res.sendStatus(503);
+  }
+});
+
 const uuidValido = s => typeof s === "string" &&
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
 

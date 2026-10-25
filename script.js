@@ -53,11 +53,11 @@ $("#checkout-form").addEventListener("submit", async e => {
     alert("Por enquanto, o PIX aceita apenas 1 VIP por pedido. Retire os outros itens da sacola.");
     return;
   }
-  const contaMta = $("#account-name").value.trim();
+  const codigoVinculacao = $("#link-code").value.trim().toUpperCase();
   const jogadorId = $("#player-id").value.trim();
   const email = $("#buyer-email").value.trim();
-  if (!contaMta || !/^[0-9]{1,10}$/.test(jogadorId) || !email) {
-    alert("Preencha nome da conta, ID e e-mail corretamente."); return;
+  if (!/^[A-F0-9]{10}$/.test(codigoVinculacao) || !/^[0-9]{1,10}$/.test(jogadorId) || !email) {
+    alert("Preencha o código do MTA, ID e e-mail corretamente."); return;
   }
   const btn = $("#checkout-form button[type=submit]");
   const result = $("#order-result");
@@ -69,7 +69,7 @@ $("#checkout-form").addEventListener("submit", async e => {
     const resposta = await fetch("/api/pix/criar", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ produtoId: cart[0].id, contaMta, jogadorId, email })
+      body: JSON.stringify({ produtoId: cart[0].id, codigoVinculacao, jogadorId, email })
     });
     const dados = await resposta.json();
     if (!resposta.ok) throw new Error(dados.erro || "Nao foi possivel gerar o PIX.");
@@ -116,7 +116,7 @@ $("#checkout-form").addEventListener("submit", async e => {
     result.append(status);
     const order = {
       id: dados.referencia, date: new Date().toLocaleString("pt-BR"),
-      contaMta, jogadorId, items: [{ id: cart[0].id, name: cart[0].name, qty: 1, price: cart[0].price }],
+      contaMta: "Conta vinculada pelo MTA", jogadorId, items: [{ id: cart[0].id, name: cart[0].name, qty: 1, price: cart[0].price }],
       total: cart[0].price, status: "PIX gerado — aguardando confirmacao"
     };
     const orders = safeReadOrders(); orders.push(order);
