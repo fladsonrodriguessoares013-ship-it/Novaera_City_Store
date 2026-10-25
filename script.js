@@ -32,50 +32,108 @@ $("#filters").querySelectorAll("[data-filter]").forEach(btn => btn.addEventListe
 $("#checkout").addEventListener("click",() => { if (!cart.length) return; closeCart(); $("#order-result").hidden = true; $("#checkout-modal").classList.add("show"); });
 $("#close-modal").addEventListener("click",() => $("#checkout-modal").classList.remove("show"));
 $("#checkout-modal").addEventListener("click",e => { if (e.target.id === "checkout-modal") $("#checkout-modal").classList.remove("show"); });
-$("#checkout-form").addEventListener("submit", e => {
+$("#checkout-form").addEventListener("submit", async e => {
   e.preventDefault();
   if (!cart.length) return;
-
+  if (cart.length !== 1 || cart[0].qty !== 1 || cart[0].category !== "VIP") {
+    alert("Por enquanto, o PIX aceita apenas 1 VIP por pedido. Retire os outros itens da sacola.");
+    return;
+  }
   const contaMta = $("#account-name").value.trim();
   const jogadorId = $("#player-id").value.trim();
   const email = $("#buyer-email").value.trim();
-
   if (!contaMta || !/^[0-9]{1,10}$/.test(jogadorId) || !email) {
-    alert("Preencha o nome da conta, o ID, e o e-mail corretamente.");
-    return;
+    alert("Preencha nome da conta, ID e e-mail corretamente."); return;
   }
-
-  // DEMONSTRACAO: estes dados sao apenas declarados pelo comprador.
-  // Nao comprovam propriedade da conta nem autorizam entrega de VIP.
-  const order = {
-    id: "NC-" + Date.now().toString().slice(-8),
-    date: new Date().toLocaleString("pt-BR"),
-    contaMta,
-    jogadorId,
-    contact: $("#contact").value.trim(),
-    items: cart.map(i => ({
-      id: i.id, name: i.name, qty: i.qty, price: i.price,
-      deliveryType: i.deliveryType || "manual",
-      vipIndex: i.vipIndex || null, days: i.days || null,
-      quantity: i.quantity || null, numeration: i.numeration || null,
-      vehicleModel: i.vehicleModel || null, duration: i.duration || null
-    })),
-    total: total(),
-    status: "TESTE — sem pagamento e sem entrega"
-  };
-
-  // Evita guardar o e-mail no historico local deste navegador.
-  const orders = safeReadOrders();
-  orders.push(order);
-  localStorage.setItem("novaera_store_orders", JSON.stringify(orders));
-
+  const btn = $("#checkout-form button[type=submit]");
   const result = $("#order-result");
+  btn.disabled = true;
+  btn.textContent = "GERANDO PIX...";
   result.hidden = false;
-  result.textContent = `PEDIDO DE TESTE ${order.id}\nConta MTA: ${contaMta}\nID: ${jogadorId}\nE-mail informado: ${email}\nTotal: ${money(order.total)}\n\nNenhum PIX foi cobrado. Nenhum pedido foi enviado ao servidor MTA.`;
-  cart = [];
-  renderCart();
-  renderOrders();
-  $("#checkout-form").reset();
+  result.replaceChildren();
+  try {
+    const resposta = await fetch("/api/pix/criar", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ produtoId: cart[0].id, contaMta, jogadorId, email })
+    });
+    const dados = await resposta.json();
+    if (!resposta.ok) throw new Error(dados.erro || "Nao foi possivel gerar o PIX.");
+    if (!dados.qrCode && !dados.qrCodeBase64 && !dados.ticketUrl) {
+      throw new Error("Mercado Pago nao retornou dados para pagamento. Nao tente pagar sem confirmar o pedido.");
+    }
+    const heading = document.createElement("strong");
+    heading.textContent = "PIX GERADO — " + money(cart[0].price);
+    result.append(heading, document.createElement("hr"));
+    if (dados.qrCodeBase64) {
+      const img = document.createElement("img");
+      img.alt = "QR Code PIX";
+      img.style.cssText = "display:block;width:210px;max-width:100%;margin:12px auto;background:white;padding:8px;border-radius:8px";
+      img.src = "data:image/png;base64," + dados.qrCodeBase64;
+      result.append(img);
+    }
+    if (dados.qrCode) {
+      const campo = document.createElement("textarea");
+      campo.readOnly = true;
+      campo.value = dados.qrCode;
+      campo.rows = 4;
+      campo.style.cssText = "width:100%;box-sizing:border-box;resize:vertical";
+      result.append(campo);
+      const copiar = document.createElement("button");
+      copiar.type = "button";
+      copiar.textContent = "COPIAR PIX COPIA E COLA";
+      copiar.className = "checkout-button";
+      copiar.addEventListener("click", async () => {
+        try { await navigator.clipboard.writeText(dados.qrCode); copiar.textContent = "PIX COPIADO!"; }
+        catch { campo.select(); alert("Selecione e copie o codigo PIX acima."); }
+      });
+      result.append(copiar);
+    }
+    if (dados.ticketUrl && /^https:\/\//.test(dados.ticketUrl)) {
+      const a = document.createElement("a");
+      a.href = dados.ticketUrl;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.textContent = "Abrir pagina do PIX";
+      result.append(a);
+    }
+    const status = document.createElement("p");
+    status.textContent = "Aguardando confirmacao do pagamento. VIP nao e entregue automaticamente.";
+    result.append(status);
+    const order = {
+      id: dados.referencia, date: new Date().toLocaleString("pt-BR"),
+      contaMta, jogadorId, items: [{ id: cart[0].id, name: cart[0].name, qty: 1, price: cart[0].price }],
+      total: cart[0].price, status: "PIX gerado — aguardando confirmacao"
+    };
+    const orders = safeReadOrders(); orders.push(order);
+    localStorage.setItem("novaera_store_orders", JSON.stringify(orders));
+    renderOrders();
+    cart = []; renderCart();
+    // A consulta de status e manual: nao altera o status sem verificacao no servidor.
+    const verificar = document.createElement("button");
+    verificar.type = "button";
+    verificar.className = "checkout-button";
+    verificar.textContent = "VERIFICAR PAGAMENTO";
+    verificar.addEventListener("click", async () => {
+      try {
+        const r = await fetch("/api/pix/status/" + encodeURIComponent(dados.referencia));
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.erro || "Falha na consulta");
+        status.textContent = d.estado === "aprovado"
+          ? "Pagamento aprovado! Entrega de VIP ainda depende de liberacao manual."
+          : "Status do pedido: " + d.estado + ". Aguarde e consulte novamente.";
+        const stored = safeReadOrders();
+        const item = stored.find(o => o.id === dados.referencia);
+        if (item) { item.status = d.estado === "aprovado" ? "PIX aprovado — entrega pendente" : "PIX: " + d.estado; localStorage.setItem("novaera_store_orders", JSON.stringify(stored)); renderOrders(); }
+      } catch (err) { status.textContent = err.message; }
+    });
+    result.append(verificar);
+  } catch (err) {
+    result.textContent = "Erro ao gerar PIX: " + err.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "GERAR PIX";
+  }
 });
 $("#clear-orders").addEventListener("click",() => { if (confirm("Apagar o histórico de pedidos salvo somente neste navegador?")) { localStorage.removeItem("novaera_store_orders"); renderOrders(); } });
 document.addEventListener("keydown",e => { if (e.key === "Escape") { closeCart(); $("#checkout-modal").classList.remove("show"); } });

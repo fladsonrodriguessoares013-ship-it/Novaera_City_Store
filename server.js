@@ -197,7 +197,7 @@ app.post("/api/pix/criar", async (req, res) => {
     });
   }
 
-  const { produtoId, email, jogadorId } = req.body || {};
+  const { produtoId, email, jogadorId, contaMta } = req.body || {};
   const produto = produtos[produtoId];
 
   if (!produto) {
@@ -227,6 +227,14 @@ app.post("/api/pix/criar", async (req, res) => {
     });
   }
 
+  const conta = typeof contaMta === "string" ? contaMta.trim() : "";
+  if (!conta || conta.length > 64 || /[\x00-\x1f\x7f]/.test(conta)) {
+    return res.status(400).json({ erro: "Nome da conta MTA invalido" });
+  }
+  if (id === null) {
+    return res.status(400).json({ erro: "Informe o ID do jogador" });
+  }
+
   const token = process.env.MP_ACCESS_TOKEN;
 
   if (!token) {
@@ -246,16 +254,18 @@ app.post("/api/pix/criar", async (req, res) => {
         produto_nome,
         valor_centavos,
         email,
-        jogador_id
+        jogador_id,
+        conta_mta
       )
-      VALUES ($1, $2, $3, $4, $5, $6)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
     `, [
       referencia,
       produtoId,
       produto.nome,
       centavos,
       email,
-      id
+      id,
+      conta
     ]);
 
     const resposta = await fetch(
@@ -326,6 +336,7 @@ app.post("/api/pix/criar", async (req, res) => {
       dados.transactions?.payments?.[0];
 
     return res.json({
+      referencia,
       orderId: dados.id,
       status: dados.status,
       qrCode: pagamento?.payment_method?.qr_code,
@@ -344,6 +355,23 @@ app.post("/api/pix/criar", async (req, res) => {
     return res.status(503).json({
       erro: "Falha temporaria ao registrar o pedido"
     });
+  }
+});
+
+app.get("/api/pix/status/:referencia", async (req, res) => {
+  const referencia = req.params.referencia;
+  if (!/^[a-f0-9-]{36}$/i.test(referencia)) return res.status(400).json({ erro: "Referencia invalida" });
+  if (!bancoPronto) return res.status(503).json({ erro: "Banco indisponivel" });
+  try {
+    const result = await pool.query(
+      "SELECT estado, entrega_estado FROM novaera_pedidos WHERE referencia = $1",
+      [referencia]
+    );
+    if (!result.rowCount) return res.status(404).json({ erro: "Pedido nao encontrado" });
+    return res.json(result.rows[0]);
+  } catch (e) {
+    console.error("[NOVAERA] Erro ao consultar status:", e.message);
+    return res.status(503).json({ erro: "Falha ao consultar pedido" });
   }
 });
 
