@@ -130,7 +130,9 @@ $("#checkout-form").addEventListener("submit", async e => {
     verificar.textContent = "VERIFICAR PAGAMENTO";
     verificar.addEventListener("click", async () => {
       try {
-        const r = await fetch("/api/pix/status/" + encodeURIComponent(dados.referencia));
+        verificar.disabled = true;
+        verificar.textContent = "CONSULTANDO...";
+        const r = await fetch("/api/pix/status/" + encodeURIComponent(dados.referencia), { cache: "no-store" });
         const d = await r.json();
         if (!r.ok) throw new Error(d.erro || "Falha na consulta");
         status.textContent = d.estado === "aprovado"
@@ -139,7 +141,8 @@ $("#checkout-form").addEventListener("submit", async e => {
         const stored = safeReadOrders();
         const item = stored.find(o => o.id === dados.referencia);
         if (item) { item.status = d.estado === "aprovado" ? "PIX aprovado — entrega pendente" : "PIX: " + d.estado; localStorage.setItem("novaera_store_orders", JSON.stringify(stored)); renderOrders(); }
-      } catch (err) { status.textContent = err.message; }
+      } catch (err) { status.textContent = "Erro na verificacao: " + err.message; }
+      finally { verificar.disabled = false; verificar.textContent = "VERIFICAR PAGAMENTO"; }
     });
     result.append(verificar);
     const voltar = document.createElement("button");

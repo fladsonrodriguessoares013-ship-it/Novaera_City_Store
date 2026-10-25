@@ -227,12 +227,8 @@ app.post("/api/pix/criar", async (req, res) => {
     });
   }
 
-  const conta = typeof contaMta === "string" ? contaMta.trim() : "";
-  if (!conta || conta.length > 64 || /[\x00-\x1f\x7f]/.test(conta)) {
+  if (typeof contaMta !== "string" || !/^[\p{L}\p{N}_. -]{3,40}$/u.test(contaMta.trim())) {
     return res.status(400).json({ erro: "Nome da conta MTA invalido" });
-  }
-  if (id === null) {
-    return res.status(400).json({ erro: "Informe o ID do jogador" });
   }
 
   const token = process.env.MP_ACCESS_TOKEN;
@@ -265,7 +261,7 @@ app.post("/api/pix/criar", async (req, res) => {
       centavos,
       email,
       id,
-      conta
+      contaMta.trim()
     ]);
 
     const resposta = await fetch(
@@ -336,8 +332,8 @@ app.post("/api/pix/criar", async (req, res) => {
       dados.transactions?.payments?.[0];
 
     return res.json({
-      referencia,
       orderId: dados.id,
+      referencia,
       status: dados.status,
       qrCode: pagamento?.payment_method?.qr_code,
       qrCodeBase64:
@@ -358,20 +354,25 @@ app.post("/api/pix/criar", async (req, res) => {
   }
 });
 
+// Consulta publica limitada ao estado do pedido. Somente o webhook validado
+// pode marcar um pagamento como aprovado.
 app.get("/api/pix/status/:referencia", async (req, res) => {
   const referencia = req.params.referencia;
-  if (!/^[a-f0-9-]{36}$/i.test(referencia)) return res.status(400).json({ erro: "Referencia invalida" });
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(referencia)) {
+    return res.status(400).json({ erro: "Referencia invalida" });
+  }
   if (!bancoPronto) return res.status(503).json({ erro: "Banco indisponivel" });
   try {
     const result = await pool.query(
-      "SELECT estado, entrega_estado FROM novaera_pedidos WHERE referencia = $1",
+      "SELECT estado FROM novaera_pedidos WHERE referencia = $1::uuid",
       [referencia]
     );
     if (!result.rowCount) return res.status(404).json({ erro: "Pedido nao encontrado" });
-    return res.json(result.rows[0]);
-  } catch (e) {
-    console.error("[NOVAERA] Erro ao consultar status:", e.message);
-    return res.status(503).json({ erro: "Falha ao consultar pedido" });
+    res.set("Cache-Control", "no-store");
+    return res.json({ estado: result.rows[0].estado });
+  } catch (erro) {
+    console.error("[NOVAERA] Falha ao consultar status:", erro.message);
+    return res.status(503).json({ erro: "Nao foi possivel consultar o pedido" });
   }
 });
 
