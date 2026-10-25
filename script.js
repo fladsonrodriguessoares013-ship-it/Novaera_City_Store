@@ -123,28 +123,6 @@ $("#checkout-form").addEventListener("submit", async e => {
     localStorage.setItem("novaera_store_orders", JSON.stringify(orders));
     renderOrders();
     cart = []; renderCart();
-    // A consulta de status e manual: nao altera o status sem verificacao no servidor.
-    const verificar = document.createElement("button");
-    verificar.type = "button";
-    verificar.className = "checkout-button";
-    verificar.textContent = "VERIFICAR PAGAMENTO";
-    verificar.addEventListener("click", async () => {
-      try {
-        verificar.disabled = true;
-        verificar.textContent = "CONSULTANDO...";
-        const r = await fetch("/api/pix/status/" + encodeURIComponent(dados.referencia), { cache: "no-store" });
-        const d = await r.json();
-        if (!r.ok) throw new Error(d.erro || "Falha na consulta");
-        status.textContent = d.estado === "aprovado"
-          ? "Pagamento aprovado! Entrega de VIP ainda depende de liberacao manual."
-          : "Status do pedido: " + d.estado + ". Aguarde e consulte novamente.";
-        const stored = safeReadOrders();
-        const item = stored.find(o => o.id === dados.referencia);
-        if (item) { item.status = d.estado === "aprovado" ? "PIX aprovado — entrega pendente" : "PIX: " + d.estado; localStorage.setItem("novaera_store_orders", JSON.stringify(stored)); renderOrders(); }
-      } catch (err) { status.textContent = "Erro na verificacao: " + err.message; }
-      finally { verificar.disabled = false; verificar.textContent = "VERIFICAR PAGAMENTO"; }
-    });
-    result.append(verificar);
     const voltar = document.createElement("button");
     voltar.type = "button";
     voltar.className = "secondary-button";
