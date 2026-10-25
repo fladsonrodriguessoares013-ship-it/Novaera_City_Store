@@ -24,46 +24,18 @@ const pool = new Pool({
 let bancoPronto = false;
 
 // ====================================
-// CATALOGO DE VIPS - PRECO EM REAIS
+// CATALOGO DE VIPS - VALORES EM REAIS (PIX)
 // ====================================
 
 const produtos = {
-  "vip-vip-royal": {
-    nome: "VIP Royal",
-    preco: "10.00",
-    vipNumero: 1,
-    dias: 30
-  },
-
-  "vip-vip-mestre": {
-    nome: "VIP Mestre",
-    preco: "20.00",
-    vipNumero: 2,
-    dias: 30
-  },
-
-  "vip-vip-black": {
-    nome: "VIP Black",
-    preco: "40.00",
-    vipNumero: 3,
-    dias: 30
-  },
-
-  "vip-vip-novaera": {
-    nome: "VIP NOVAERA",
-    preco: "70.00",
-    vipNumero: 4,
-    dias: 30
-  },
-
-  "vip-vip-patrocinador": {
-    nome: "VIP Patrocinador",
-    preco: "100.00",
-    vipNumero: 5,
-    dias: 60
-  }
+  "vip-vip-royal": { nome: "VIP Royal", preco: "10.00", vipNumero: 1, dias: 30 },
+  "vip-vip-mestre": { nome: "VIP Mestre", preco: "20.00", vipNumero: 2, dias: 30 },
+  "vip-vip-black": { nome: "VIP Black", preco: "40.00", vipNumero: 3, dias: 30 },
+  "vip-vip-novaera": { nome: "VIP NOVAERA", preco: "70.00", vipNumero: 4, dias: 30 },
+  "vip-vip-patrocinador": { nome: "VIP Patrocinador", preco: "100.00", vipNumero: 5, dias: 60 }
 };
 
+// ====================================
 // ====================================
 // CRIAR TABELA AUTOMATICAMENTE
 // ====================================
