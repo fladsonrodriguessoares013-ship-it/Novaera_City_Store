@@ -543,6 +543,8 @@ app.post(
 // PONTE PRIVADA MTA - desativada ate testes
 // ====================================
 const entregaLigada = () => process.env.NOVAERA_DELIVERY_ENABLED === "true";
+// Em teste real, permitir entrega apenas para a conta configurada.
+const contaLiberada = conta => process.env.NOVAERA_TEST_ACCOUNT === "coringa" && conta === "coringa";
 function autorizarMta(req, res, next) {
   const segredo = process.env.NOVAERA_BRIDGE_SECRET;
   const recebido = req.get("x-novaera-bridge-secret") || "";
@@ -588,6 +590,7 @@ app.get("/api/mta/pedidos", autorizarMta, async (req, res) => {
   if (typeof conta !== "string" || conta.length < 1 || conta.length > 64) {
     return res.sendStatus(400);
   }
+  if (!contaLiberada(conta)) return res.json({ pedidos: [] });
   try {
     const result = await pool.query(`SELECT p.referencia, p.produto_id, p.conta_mta
       FROM novaera_pedidos p LEFT JOIN novaera_entregas e ON e.referencia = p.referencia
@@ -622,6 +625,7 @@ app.post("/api/mta/reservar", autorizarMta, async (req, res) => {
   if (!entregaLigada()) return res.status(503).json({ erro: "Entrega desativada" });
   const { referencia, conta } = (Array.isArray(req.body) ? req.body[0] : req.body) || {};
   if (!uuidValido(referencia) || typeof conta !== "string" || conta.length > 64) return res.sendStatus(400);
+  if (!contaLiberada(conta)) return res.sendStatus(403);
   try {
     const r = await pool.query(`INSERT INTO novaera_entregas (referencia, conta_mta, estado)
       SELECT referencia, conta_mta, 'reservado' FROM novaera_pedidos
@@ -634,6 +638,7 @@ app.post("/api/mta/confirmar", autorizarMta, async (req, res) => {
   if (!entregaLigada()) return res.status(503).json({ erro: "Entrega desativada" });
   const { referencia, conta } = (Array.isArray(req.body) ? req.body[0] : req.body) || {};
   if (!uuidValido(referencia) || typeof conta !== "string" || conta.length > 64) return res.sendStatus(400);
+  if (!contaLiberada(conta)) return res.sendStatus(403);
   try {
     const r = await pool.query(`WITH confirmacao AS (
       UPDATE novaera_entregas SET estado = 'confirmado', atualizado_em = NOW()
