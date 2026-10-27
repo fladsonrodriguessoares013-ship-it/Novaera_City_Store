@@ -46,6 +46,35 @@ function fecharPagamento(){
 $("#checkout").addEventListener("click",() => { if (!cart.length) return; closeCart(); fecharPagamento(); $("#order-result").hidden = true; $("#checkout-modal").classList.add("show"); });
 $("#close-modal").addEventListener("click",fecharPagamento);
 $("#checkout-modal").addEventListener("click",e => { if (e.target.id === "checkout-modal") fecharPagamento(); });
+// Código copiado pelo comando /vincularloja no cliente MTA.
+const linkCodeInput = $("#link-code");
+const linkCodeFeedback = $("#link-code-feedback");
+function aplicarCodigoMTA(texto) {
+  const codigo = String(texto || "").trim().toUpperCase();
+  if (!/^[A-F0-9]{10}$/.test(codigo)) {
+    linkCodeFeedback.textContent = "Código inválido. Use /vincularloja no MTA e tente novamente.";
+    return false;
+  }
+  linkCodeInput.value = codigo;
+  linkCodeFeedback.textContent = "Código preenchido! Agora informe seu ID e e-mail.";
+  return true;
+}
+$("#paste-link-code").addEventListener("click", async () => {
+  try {
+    if (!navigator.clipboard || !navigator.clipboard.readText) throw new Error("Clipboard indisponível");
+    aplicarCodigoMTA(await navigator.clipboard.readText());
+  } catch (err) {
+    linkCodeFeedback.textContent = "O navegador não permitiu colar automaticamente. Clique no campo e pressione Ctrl+V.";
+    linkCodeInput.focus();
+  }
+});
+linkCodeInput.addEventListener("paste", event => {
+  const texto = event.clipboardData && event.clipboardData.getData("text");
+  if (texto && /^[A-Fa-f0-9]{10}$/.test(texto.trim())) {
+    event.preventDefault();
+    aplicarCodigoMTA(texto);
+  }
+});
 $("#checkout-form").addEventListener("submit", async e => {
   e.preventDefault();
   if (!cart.length) return;
