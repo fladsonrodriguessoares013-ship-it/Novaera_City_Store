@@ -646,6 +646,27 @@ app.post("/api/mta/confirmar", autorizarMta, async (req, res) => {
   } catch(e) { console.error("[MTA] confirmar:", e.message); return res.sendStatus(503); }
 });
 
+// Diagnostico de ponta a ponta SEM pagamento, reserva ou entrega.
+// Requer autenticacao da ponte e entrega desativada.
+app.get("/api/mta/diagnostico-entrega", autorizarMta, async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  if (entregaLigada()) return res.status(409).json({ erro: "Desative a entrega antes do diagnostico" });
+  if (!bancoPronto) return res.sendStatus(503);
+  try {
+    const r = await pool.query(`SELECT
+      to_regclass('public.novaera_pedidos') IS NOT NULL AS pedidos,
+      to_regclass('public.novaera_entregas') IS NOT NULL AS entregas,
+      to_regclass('public.novaera_codigos_conta') IS NOT NULL AS codigos`);
+    const tabelas = r.rows[0];
+    return res.json({ diagnostico: true, banco: true, tabelas,
+      entrega_automatica: false, pagamento_real: false,
+      pedido_criado: false, vip_entregue: false });
+  } catch (e) {
+    console.error('[MTA] diagnostico:', e.message);
+    return res.sendStatus(503);
+  }
+});
+
 // ====================================
 // INICIAR SERVIDOR
 // ====================================
