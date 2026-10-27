@@ -28,7 +28,7 @@ let bancoPronto = false;
 // ====================================
 
 const produtos = {
-  "vip-vip-royal": { nome: "VIP Royal", preco: "10.00", vipNumero: 1, dias: 30 },
+  "vip-vip-royal": { nome: "VIP Royal", preco: "1.00", vipNumero: 1, dias: 30 },
   "vip-vip-mestre": { nome: "VIP Mestre", preco: "20.00", vipNumero: 2, dias: 30 },
   "vip-vip-black": { nome: "VIP Black", preco: "40.00", vipNumero: 3, dias: 30 },
   "vip-vip-novaera": { nome: "VIP NOVAERA", preco: "70.00", vipNumero: 4, dias: 30 },
@@ -616,7 +616,7 @@ app.get("/api/mta/simular-pedido", autorizarMta, (req, res) => {
     pagamento_real: false,
     gravado_no_banco: false,
     vip_entregue: false,
-    pedido: { produto_id: "vip-vip-royal", conta_mta: conta, dias: 30, valor_centavos: 1000 }
+    pedido: { produto_id: "vip-vip-royal", conta_mta: conta, dias: 30, valor_centavos: 100 }
   });
 });
 
