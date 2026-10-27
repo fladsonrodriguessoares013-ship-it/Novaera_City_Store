@@ -28,7 +28,7 @@ let bancoPronto = false;
 // ====================================
 
 const produtos = {
-  "vip-vip-royal": { nome: "VIP Royal", preco: "1.00", vipNumero: 1, dias: 30 },
+  "vip-vip-royal": { nome: "VIP Royal", preco: "10.00", vipNumero: 1, dias: 30 },
   "vip-vip-mestre": { nome: "VIP Mestre", preco: "20.00", vipNumero: 2, dias: 30 },
   "vip-vip-black": { nome: "VIP Black", preco: "40.00", vipNumero: 3, dias: 30 },
   "vip-vip-novaera": { nome: "VIP NOVAERA", preco: "70.00", vipNumero: 4, dias: 30 },
@@ -197,8 +197,8 @@ app.get("/api/health", (req, res) => {
     status: bancoPronto
       ? "online"
       : "banco_indisponivel",
-    pix: "integracao_em_teste",
-    entregaVip: process.env.NOVAERA_DELIVERY_ENABLED === "true" ? "habilitada" : "desativada"
+    pix: "mercadopago",
+    entregaVip: entregaLigada() && publicoLigado() && !!dataPublica() ? "habilitada" : "desativada"
   });
 });
 
@@ -207,10 +207,8 @@ app.get("/api/health", (req, res) => {
 // ====================================
 
 app.post("/api/pix/criar", async (req, res) => {
-  if (!bancoPronto) {
-    return res.status(503).json({
-      erro: "Banco indisponivel"
-    });
+  if (!bancoPronto || !entregaLigada() || !publicoLigado() || !dataPublica()) {
+    return res.status(503).json({ erro: "Vendas VIP indisponiveis temporariamente" });
   }
 
   const { produtoId, email, jogadorId, codigoVinculacao } = req.body || {};
@@ -274,6 +272,12 @@ app.post("/api/pix/criar", async (req, res) => {
         return res.status(400).json({ erro: "Codigo expirado ou ja utilizado. Gere outro com /vincularloja." });
       }
       contaMta = vinculo.rows[0].conta_mta;
+      // Teste de producao: bloquear compras de outros produtos/contas.
+      if (process.env.NOVAERA_TEST_ACCOUNT === "coringa" &&
+          (contaMta !== "coringa" || produtoId !== "vip-vip-royal")) {
+        await cliente.query("ROLLBACK");
+        return res.status(403).json({ erro: "Loja restrita ao VIP Royal da conta de teste" });
+      }
       await cliente.query(`INSERT INTO novaera_pedidos (
         referencia, produto_id, produto_nome, valor_centavos, email, jogador_id, conta_mta
       ) VALUES ($1,$2,$3,$4,$5,$6,$7)`, [
@@ -544,7 +548,14 @@ app.post(
 // ====================================
 const entregaLigada = () => process.env.NOVAERA_DELIVERY_ENABLED === "true";
 // Em teste real, permitir entrega apenas para a conta configurada.
-const contaLiberada = conta => process.env.NOVAERA_TEST_ACCOUNT === "coringa" && conta === "coringa";
+// Modo publico exige habilitacao explicita e data de corte para nao entregar pedidos antigos.
+const publicoLigado = () => process.env.NOVAERA_PUBLIC_ENABLED === "true";
+const dataPublica = () => {
+  const valor = process.env.NOVAERA_PUBLIC_FROM || "";
+  const d = new Date(valor);
+  return /^\d{4}-\d{2}-\d{2}T/.test(valor) && Number.isFinite(d.getTime()) ? d.toISOString() : null;
+};
+const contaLiberada = conta => typeof conta === "string" && conta.length > 0 && conta.length <= 64 && publicoLigado() && !!dataPublica();
 function autorizarMta(req, res, next) {
   const segredo = process.env.NOVAERA_BRIDGE_SECRET;
   const recebido = req.get("x-novaera-bridge-secret") || "";
@@ -595,8 +606,9 @@ app.get("/api/mta/pedidos", autorizarMta, async (req, res) => {
     const result = await pool.query(`SELECT p.referencia, p.produto_id, p.conta_mta
       FROM novaera_pedidos p LEFT JOIN novaera_entregas e ON e.referencia = p.referencia
       WHERE p.estado = 'aprovado' AND p.entrega_estado = 'pendente'
+        AND p.produto_id = ANY($2::text[]) AND p.criado_em >= $3::timestamptz
         AND p.conta_mta = $1 AND e.referencia IS NULL
-      ORDER BY p.aprovado_em LIMIT 10`, [conta]);
+      ORDER BY p.aprovado_em LIMIT 10`, [conta, Object.keys(produtos), dataPublica()]);
     res.set("Cache-Control", "no-store");
     return res.json({ pedidos: result.rows });
   } catch (e) { console.error("[MTA] pedidos:", e.message); return res.sendStatus(503); }
@@ -616,7 +628,7 @@ app.get("/api/mta/simular-pedido", autorizarMta, (req, res) => {
     pagamento_real: false,
     gravado_no_banco: false,
     vip_entregue: false,
-    pedido: { produto_id: "vip-vip-royal", conta_mta: conta, dias: 30, valor_centavos: 100 }
+    pedido: { produto_id: "vip-vip-royal", conta_mta: conta, dias: 30, valor_centavos: 1000 }
   });
 });
 
@@ -629,8 +641,9 @@ app.post("/api/mta/reservar", autorizarMta, async (req, res) => {
   try {
     const r = await pool.query(`INSERT INTO novaera_entregas (referencia, conta_mta, estado)
       SELECT referencia, conta_mta, 'reservado' FROM novaera_pedidos
-      WHERE referencia = $1 AND conta_mta = $2 AND estado = 'aprovado' AND entrega_estado = 'pendente'
-      ON CONFLICT (referencia) DO NOTHING RETURNING referencia`, [referencia, conta]);
+      WHERE referencia = $1 AND conta_mta = $2 AND produto_id = ANY($3::text[])
+        AND criado_em >= $4::timestamptz AND estado = 'aprovado' AND entrega_estado = 'pendente'
+      ON CONFLICT (referencia) DO NOTHING RETURNING referencia`, [referencia, conta, Object.keys(produtos), dataPublica()]);
     return res.json({ reservado: r.rowCount === 1 });
   } catch(e) { console.error("[MTA] reservar:", e.message); return res.sendStatus(503); }
 });
